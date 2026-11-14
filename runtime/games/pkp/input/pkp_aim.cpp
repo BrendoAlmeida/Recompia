@@ -17,7 +17,8 @@
 //     Not for the nearby-object interaction 0x71002f7340 (the A button's target keeps the game's forward cell; its return 0x71002f73a8).
 //   break collector 0x7100588694: the join 0x7100588778 after its mouse branch: the cell ([x29 - 0x20], s16 x, y, z) becomes the hit.
 //   swing preview 0x7100721e40 (Rock Smash, Cut and their upgrades): the join 0x71007226bc (right before the shape constructor
-//     0x710009db4c): the shape's position ([x29 - 0x60]) becomes the hit cell's centre, as the game's +0xaa50.
+//     0x710009db4c): the shape's position ([x29 - 0x60]) is moved by whole cells into the target's column (place_shape: unlike the
+//     game's +0xaa50, which centres it on the hit and so selects one cell, the game's area stays).
 //   swing live hit 0x71006d9b40: its position ([x29 - 0x80], tool path only: w22 set, x27 = the character) at 0x71006da610, the same.
 //     The game's mouse mode takes the character's stored attack position (+0x35c0) there, set from its preview at the press; camera aim
 //     holds the press's view for the action (below), so the live hit is the preview's cell.
@@ -250,23 +251,28 @@ void turn_shape(uint64_t ch, uint64_t pos, float px, float pz) {
     wr<float>(pos + 8, cz + std::cos(yaw) * dist);
 }
 
-// A swing shape's position (vec4 at pos): the target's centre, as the game's mouse branch takes the pointer's +0xaa50; else turned.
+// A swing shape's position (vec4 at pos). The game's shape stays: its size, the cells it spans (Cut's area), its height and its offset
+// inside the cell. It is turned to the aim's yaw and, with a target, moved by whole cells into the target's column; its row moves only
+// when the target is two or more rows from it (a high wall row; one row off, the shape already reaches it, and Cut's plants stand in
+// the row above the ground block the ray hits). Not the game's mouse branch, which centres the shape on the hit (+0xaa50) and so
+// selects one cell.
 void place_shape(uint64_t ch, uint64_t pos, aim_debug::Use use) {
     const float px = rd<float>(pos), pz = rd<float>(pos + 8);
     if (!std::isfinite(px) || !std::isfinite(pz)) return;
     const Aim* a = aim_of(ch);
     if (!a) return;
     const float before[3] = {px, rd<float>(pos + 4), pz};
-    const char* how = "the target's centre";
+    turn_shape(ch, pos, px, pz);
+    const char* how = "no target: turned to the camera";
     if (a->hit) {
-        float c[3];
-        aim_ray::centre(a->cell, c);
-        wr<float>(pos, c[0]);
-        wr<float>(pos + 4, c[1]);
-        wr<float>(pos + 8, c[2]);
-    } else {
-        turn_shape(ch, pos, px, pz);
-        how = "no target: turned to the camera";
+        const float tx = rd<float>(pos), ty = rd<float>(pos + 4), tz = rd<float>(pos + 8);
+        const int cx = static_cast<int>(std::floor((tx + 102400.f) / 100.f)), cy = static_cast<int>(std::floor(ty / 100.f)),
+                  cz = static_cast<int>(std::floor((tz + 102400.f) / 100.f));
+        const int dy = a->cell.y - cy;
+        wr<float>(pos, tx + static_cast<float>(a->cell.x - cx) * 100.f);
+        wr<float>(pos + 8, tz + static_cast<float>(a->cell.z - cz) * 100.f);
+        if (dy >= 2 || dy <= -2) wr<float>(pos + 4, ty + static_cast<float>(dy) * 100.f);
+        how = dy >= 2 || dy <= -2 ? "moved to the target's column and row" : "moved to the target's column";
     }
     if (aim_debug::on()) {
         const float after[3] = {rd<float>(pos), rd<float>(pos + 4), rd<float>(pos + 8)};

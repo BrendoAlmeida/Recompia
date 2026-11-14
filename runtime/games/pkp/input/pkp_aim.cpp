@@ -9,9 +9,11 @@
 // local player, applies at each of those joins what the game's mouse branch writes there, from that one result. So which path breaks and
 // which places is the game's decision, not ours:
 //   target query 0x71002e19a0 (every ability, tool and held item asks it: Water Gun, Rototiller, Leafage, the placement collector and its
-//     validator, the held item's preview): the join 0x71002e1de8 after its mouse branch (0x71002e1dbc..0x71002e1de4). The start cell
-//     ([x29 - 0xb8] x, y, [x29 - 0xb4] z) becomes the adjacent cell, the row helper's band kind ([x29 - 0xd8]) and its flags (w21, w22,
-//     [sp + 0xa0]) 0 and the query mode ([sp + 0xa4]) 3, as the game does. A held block goes into the cell on the side the player looks at.
+//     validator, the held item's preview): the join 0x71002e1de8 after its mouse branch (0x71002e1dbc..0x71002e1de4). The row helper's
+//     band kind ([x29 - 0xd8]) and its flags (w21, w22, [sp + 0xa0]) become 0 and the character's vertical mode copy ([sp + 0xa4], from
+//     character + 0x3770) 3, as the game does. The start cell ([x29 - 0xb8] x, y, [x29 - 0xb4] z) becomes the adjacent cell for a query
+//     that places (the game's own flag, hook_query_join: a held block goes into the cell on the side the player looks at) and the hit
+//     for the abilities (with the adjacent cell, as in the game's mouse mode, they only ever reach the top of a block).
 //     Not for the nearby-object interaction 0x71002f7340 (the A button's target keeps the game's forward cell; its return 0x71002f73a8).
 //   break collector 0x7100588694: the join 0x7100588778 after its mouse branch: the cell ([x29 - 0x20], s16 x, y, z) becomes the hit.
 //   swing preview 0x7100721e40 (Rock Smash, Cut and their upgrades): the join 0x71007226bc (right before the shape constructor
@@ -198,23 +200,28 @@ int hook_heading(::Ctx* c, uint64_t, void*) { replace_heading(c, 0, c->x[28], "q
 int hook_swing_preview(::Ctx* c, uint64_t, void*) { replace_heading(c, 9, c->x[22], "swing preview"); return 0; }
 int hook_swing_live(::Ctx* c, uint64_t, void*) { replace_heading(c, 8, c->x[19], "swing hit"); return 0; }
 
-// The target query's join: what its mouse branch (0x71002e1dbc..0x71002e1de4) writes, with the adjacent cell as the pointer's +0xaa36.
+// The target query's join: what its mouse branch (0x71002e1dbc..0x71002e1de4) writes. The start cell is the adjacent cell (the game's
+// +0xaa36) only for a query that places: its sixth argument (w5, kept in w27 to the join and tested right after it) is 1 from the
+// placement collector 0x710058aac0, its validator 0x710058b100 and the held item's target 0x710040b9a0, and gates the query's own placement
+// check 0x71002047b4. The abilities (Water Gun 0x71005a0658, Leafage 0x710059bd4c, 0x7100598b14, 0x71003e5c44) pass 0 and get the hit
+// itself: given an empty start cell they drop to the ground below it, so the game's mouse mode never reaches a wall's side with them.
 int hook_query_join(::Ctx* c, uint64_t, void*) {
     const uint64_t ch = c->x[28], fp = c->x[29], sp = c->x[31];
     if (rd<uint64_t>(fp + 8) - g.base == kInteractReturn) return 0;   // the nearby-object interaction keeps the forward cell
     const Aim* a = aim_of(ch);
     if (!a) return 0;
+    const bool placing = (c->x[27] & 1) != 0;
+    const aim_ray::Cell* to = placing ? (a->adjacent ? &a->side : nullptr) : (a->hit ? &a->cell : nullptr);
     const int ox = rd<int16_t>(fp - 0xb8), oy = rd<int16_t>(fp - 0xb6), oz = rd<int16_t>(fp - 0xb4);
-    const bool move = a->adjacent;
-    if (aim_debug::on()) aim_debug::query_start(ox, oy, oz, move ? a->side.x : ox, move ? a->side.y : oy, move ? a->side.z : oz);
-    if (!move) return 0;
-    wr<int16_t>(fp - 0xb8, static_cast<int16_t>(a->side.x));
-    wr<int16_t>(fp - 0xb6, static_cast<int16_t>(a->side.y));
-    wr<int16_t>(fp - 0xb4, static_cast<int16_t>(a->side.z));
+    if (aim_debug::on()) aim_debug::query_start(ox, oy, oz, to ? to->x : ox, to ? to->y : oy, to ? to->z : oz);
+    if (!to) return 0;
+    wr<int16_t>(fp - 0xb8, static_cast<int16_t>(to->x));
+    wr<int16_t>(fp - 0xb6, static_cast<int16_t>(to->y));
+    wr<int16_t>(fp - 0xb4, static_cast<int16_t>(to->z));
     wr<uint8_t>(fp - 0xd8, 0);     // the row helper's band kind
     c->x[21] = 0, c->x[22] = 0;    // stored by the join's own stp to [sp + 0x74]
     wr<uint32_t>(sp + 0xa0, 0);
-    wr<uint32_t>(sp + 0xa4, 3);    // the query mode
+    wr<uint32_t>(sp + 0xa4, 3);    // the character's vertical mode copy (+0x3770): neither 1 (up) nor 2 (down)
     return 0;
 }
 

@@ -152,7 +152,6 @@ MyMod/                       <- choose this folder in Settings > Game > Mods
 
 If a download has an outer folder (for example `2.0.1/romfs/...`), choose the inner `romfs` folder, the one that contains `LD_C0_R.BIN`, not the outer one. If the folder level is wrong, `pkp.log` says that none of the mod's files replaces a game file. Mods that replace files containing shaders are not supported.
 
-The [Latin American Spanish language pack](https://github.com/Takeitslowww/pokopia-es-latam) adds a tenth language to the game's language screen. Download the pack's zip from its author and copy only the `ES-LATAM` folder (inside `0400A3A01EE4C000`) into the game's `mods` folder; it then shows on the launcher's Mods page. The zip's `exefs` files and `subsdk9` are for emulators and are not used; Recompia supplies the language behavior natively. The language screen only appears before the game has a save. The translations and artwork come from the pack's author.
 
 ### Mods e traduções (Português do Brasil)
 

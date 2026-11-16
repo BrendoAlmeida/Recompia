@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Pokémon Pokopia: Latin American Spanish as a tenth language, supplied by a Modtopia language pack (issue #590).
+// Pokémon Pokopia: language packs. A community pack in the mods folder adds ONE extra language (slot 9) to the game's language screen
+// and to the save (issue #590). Recompia ships no translations; the pack supplies the text, the confirmation prompt and the label art.
 //
 // The game knows nine languages; Spanish is 5. A pack adds language 9 to the first-boot grid and the save, while the game's current-language
 // object and every localized-table reader keep using 5. LINKDATA_PATCH records whose real-size field carries 'LATM' in its upper half are held
 // here instead of applied over Spain Spanish. Selecting either Spanish swaps those records and lets the game's own language-change callback
 // store the choice and reload its tables. Without a pack no marked records are captured and the grid keeps its nine buttons.
 //
-// The data format and language-screen behavior are documented by Takeitslowww/pokopia-es-latam. The pack supplies the translations, confirmation
+// Only one extra slot fits: the confirmation-row table (0x283eba8..0x283ebba) is followed at once by the label table, and the label table
+// (0x283ebbc..0x283ebce) by another table, so rows for a slot 10 and 11 would overwrite live data. More than one extra language needs the
+// two lookups redirected to tables of our own (more hooks); see the pull request.
+//
+// The record format and language-screen behavior were first documented by Takeitslowww/pokopia-es-latam, whose Latin American Spanish pack
+// is the first to use them ('LATM' is that format's marker). The pack supplies the translations, confirmation
 // prompts and label artwork through its RomFS overlay; its emulator-specific IPS and subsdk9 files are not used by the recomp.
-#include "ui/pkp_language_latam.h"
+#include "ui/pkp_language_packs.h"
 
 #include <array>
 #include <cstdint>
@@ -21,8 +27,8 @@ namespace nxrt::games::pkp {
 namespace {
 
 constexpr const char* kTag = "pkp";
-constexpr uint32_t kSpanish = 5, kLatam = 9;
-constexpr uint64_t kLatamMarker = 0x4c41544d;  // 'LATM'
+constexpr uint32_t kSpanish = 5, kPackLanguage = 9;
+constexpr uint64_t kPackMarker = 0x4c41544d;  // 'LATM'
 constexpr uint32_t kLinkDataRecords = 12298;
 constexpr size_t kMaxCaptured = 1024;
 
@@ -36,7 +42,7 @@ constexpr std::array kLanguageCurrent = {0xffaca8ull, 0xffb120ull};
 
 constexpr uint64_t kConfirmRows = 0x283ebba;
 constexpr uint64_t kLabelRows = 0x283ebbc;
-constexpr uint16_t kLatamConfirmRow = 0x50, kLatamLabelRow = 0x102;
+constexpr uint16_t kPackConfirmRow = 0x50, kPackLabelRow = 0x102;
 
 struct RecordEntry {
     uint32_t size = 0;
@@ -52,7 +58,7 @@ static_assert(sizeof(RecordEntry) == 24);
 struct Captured {
     uint32_t record = 0;
     uint32_t reserved = 0;
-    RecordEntry latam;
+    RecordEntry pack;
     RecordEntry original;
 };
 
@@ -77,10 +83,10 @@ void set_active(bool on) {
     if (!guest::ok(s.table, static_cast<uint64_t>(kLinkDataRecords) * sizeof(RecordEntry))) return;
     for (uint32_t i = 0; i < s.count; ++i) {
         const Captured& e = s.entries[i];
-        guest::wr<RecordEntry>(s.table + static_cast<uint64_t>(e.record) * sizeof(RecordEntry), on ? e.latam : e.original);
+        guest::wr<RecordEntry>(s.table + static_cast<uint64_t>(e.record) * sizeof(RecordEntry), on ? e.pack : e.original);
     }
     s.active = on;
-    NXLOG_I(kTag, "Latin American Spanish %s (%u translated records)", on ? "on" : "off", s.count);
+    NXLOG_I(kTag, "Language pack %s (%u translated records)", on ? "on" : "off", s.count);
 }
 
 // A marked record proves that main is loaded and that a pack is installed. Its two unused language-9 lookup rows live in read-only data.
@@ -89,25 +95,25 @@ void prepare_lookup_rows() {
     if (s.lookup_rows_checked) return;
     s.lookup_rows_checked = true;
     const uint64_t confirm = s.base + kConfirmRows;
-    const uint64_t label = s.base + kLabelRows + 2 * kLatam;
+    const uint64_t label = s.base + kLabelRows + 2 * kPackLanguage;
     const uint64_t page = confirm & ~(mem::kPage - 1);
     if (!mem::is_mapped(confirm, 2) || !mem::is_mapped(label, 2)) {
-        NXLOG_W(kTag, "Latin American Spanish: the language lookup rows are not mapped; no tenth button");
+        NXLOG_W(kTag, "Language pack: the language lookup rows are not mapped; no tenth button");
         return;
     }
     const uint16_t old_confirm = guest::rd<uint16_t>(confirm), old_label = guest::rd<uint16_t>(label);
-    if ((old_confirm && old_confirm != kLatamConfirmRow) || (old_label && old_label != kLatamLabelRow)) {
-        NXLOG_W(kTag, "Latin American Spanish: the language lookup rows are already in use; no tenth button");
+    if ((old_confirm && old_confirm != kPackConfirmRow) || (old_label && old_label != kPackLabelRow)) {
+        NXLOG_W(kTag, "Language pack: the language lookup rows are already in use; no tenth button");
         return;
     }
     if (!mem::protect(page, mem::kPage, mem::Prot::RW)) {
-        NXLOG_W(kTag, "Latin American Spanish: cannot make the language lookup rows writable; no tenth button");
+        NXLOG_W(kTag, "Language pack: cannot make the language lookup rows writable; no tenth button");
         return;
     }
-    guest::wr<uint16_t>(confirm, kLatamConfirmRow);
-    guest::wr<uint16_t>(label, kLatamLabelRow);
+    guest::wr<uint16_t>(confirm, kPackConfirmRow);
+    guest::wr<uint16_t>(label, kPackLabelRow);
     if (!mem::protect(page, mem::kPage, mem::Prot::R)) {
-        NXLOG_W(kTag, "Latin American Spanish: cannot restore the language lookup rows' protection");
+        NXLOG_W(kTag, "Language pack: cannot restore the language lookup rows' protection");
         return;
     }
     s.lookup_rows_ready = true;
@@ -116,7 +122,7 @@ void prepare_lookup_rows() {
 int hook_patch_entry(::Ctx* c, uint64_t, void*) {
     State& s = st();
     const uint64_t marked_size = c->x[12];
-    if ((marked_size >> 32) != kLatamMarker) return 0;
+    if ((marked_size >> 32) != kPackMarker) return 0;
 
     // The original cbz skips a marked entry after it is captured, leaving the game's Spain-Spanish record in place.
     c->x[12] = 0;
@@ -149,15 +155,15 @@ int hook_patch_entry(::Ctx* c, uint64_t, void*) {
         captured->record = record;
         captured->original = guest::rd<RecordEntry>(dst);
     }
-    captured->latam = captured->original;
-    captured->latam.size = static_cast<uint32_t>(fields[1]);
-    captured->latam.stored_size = static_cast<uint32_t>(fields[2]);
-    captured->latam.offset = fields[0];
-    captured->latam.compressed = static_cast<uint32_t>(fields[3]) != 0;
-    captured->latam.from_patch = 1;
+    captured->pack = captured->original;
+    captured->pack.size = static_cast<uint32_t>(fields[1]);
+    captured->pack.stored_size = static_cast<uint32_t>(fields[2]);
+    captured->pack.offset = fields[0];
+    captured->pack.compressed = static_cast<uint32_t>(fields[3]) != 0;
+    captured->pack.from_patch = 1;
     s.table = table;
     prepare_lookup_rows();
-    if (s.active) guest::wr<RecordEntry>(dst, captured->latam);
+    if (s.active) guest::wr<RecordEntry>(dst, captured->pack);
     return 0;
 }
 
@@ -172,25 +178,25 @@ int hook_grid_entries(::Ctx* c, uint64_t, void*) {
     const uint64_t entries = guest::rd<uint64_t>(list);
     if (count >= capacity || !guest::ok(entries, (count + 1) * 12)) return 0;
     for (uint64_t i = 0; i < count; ++i)
-        if (guest::rd<uint32_t>(entries + i * 12 + 8) == kLatam) return 0;   // already on this list
+        if (guest::rd<uint32_t>(entries + i * 12 + 8) == kPackLanguage) return 0;   // already on this list
     guest::wr<uint32_t>(entries + count * 12, 0x2f);
     guest::wr<uint32_t>(entries + count * 12 + 4, static_cast<uint32_t>(count));
-    guest::wr<uint32_t>(entries + count * 12 + 8, kLatam);
+    guest::wr<uint32_t>(entries + count * 12 + 8, kPackLanguage);
     guest::wr<uint64_t>(list + 8, count + 1);
     return 0;
 }
 
 // w10 is reloaded by the game's own ldr before the cmp, so changing it here never touches the live language object (read by every
-// localized-table reader). A changed value forces the game's store + reload callback even for Spain Spanish <-> Latam, both runtime 5.
+// localized-table reader). A changed value forces the game's store + reload callback even for Spain Spanish <-> the pack, both runtime 5.
 int hook_language_compare(::Ctx* c, uint64_t, void*) {
     State& s = st();
     const uint32_t asked = static_cast<uint32_t>(c->x[0]);
-    if (asked > kLatam) return 0;
-    const bool want = asked == kLatam;
+    if (asked > kPackLanguage) return 0;
+    const bool want = asked == kPackLanguage;
     const uint32_t request = want ? kSpanish : asked;
     c->x[0] = request;
     if (want && !s.count) {
-        NXLOG_W(kTag, "Latin American Spanish is selected but no language pack is loaded: the game runs in Spain Spanish and the save keeps the choice");
+        NXLOG_W(kTag, "The extra language is selected but no language pack is loaded: the game runs in Spain Spanish and the save keeps the choice");
         return 0;
     }
     if (want != s.active) {
@@ -202,12 +208,12 @@ int hook_language_compare(::Ctx* c, uint64_t, void*) {
 
 // w0 is dead after the game's store (the table reload takes no argument), so the game itself never sees 9.
 int hook_language_store(::Ctx* c, uint64_t, void*) {
-    if (st().active && static_cast<uint32_t>(c->x[0]) == kSpanish) c->x[0] = kLatam;
+    if (st().active && static_cast<uint32_t>(c->x[0]) == kSpanish) c->x[0] = kPackLanguage;
     return 0;
 }
 
 int hook_language_current(::Ctx* c, uint64_t, void*) {
-    if (st().active && static_cast<uint32_t>(c->x[8]) == kSpanish) c->x[8] = kLatam;
+    if (st().active && static_cast<uint32_t>(c->x[8]) == kSpanish) c->x[8] = kPackLanguage;
     return 0;
 }
 
@@ -225,12 +231,12 @@ void install(const FeatureInstall& in) {
 void remove() {
     State& s = st();
     if (s.active) set_active(false);
-    if (s.dropped) NXLOG_W(kTag, "Latin American Spanish: %u marked records were invalid or did not fit", s.dropped);
+    if (s.dropped) NXLOG_W(kTag, "Language pack: %u marked records were invalid or did not fit", s.dropped);
     s = State{};
 }
 
 }  // namespace
 
-const Feature kLanguageLatamFeature = {.name = "language_latam", .install = &install, .remove = &remove};
+const Feature kLanguagePacksFeature = {.name = "language_packs", .install = &install, .remove = &remove};
 
 }  // namespace nxrt::games::pkp
